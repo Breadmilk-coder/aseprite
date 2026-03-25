@@ -1,66 +1,70 @@
 name: Aseprite Build
 
-# 触发工作流的事件
 on:
-  # 1. 当你手动点击运行按钮时触发
   workflow_dispatch:
-  # 2. 当你向 main 分支推送代码时触发（保持与最新主分支同步）
   push:
     branches: [ main ]
 
 jobs:
   build:
-    # 使用最新的 Windows 虚拟机环境进行构建
     runs-on: windows-latest
-    strategy:
-      fail-fast: false # 即使某个步骤失败，也继续运行其他步骤
 
     steps:
-      # 1. 检出代码（从你的仓库中获取代码）
-      - name: Checkout code
+      # 1. 检出代码（包含所有子模块）
+      - name: Checkout code with submodules
         uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'   # 关键！自动初始化并更新子模块
 
-      # 2. 获取并下载 Skia 依赖（Aseprite 的图形后端）
+      # 2. 下载并准备 Skia 依赖
       - name: Get Skia URL
         shell: pwsh
         run: |
           $response = Invoke-RestMethod -Uri "https://api.github.com/repos/aseprite/skia/releases/latest"
           $url = $response.assets | Where-Object { $_.name -like "Skia-Windows-Release-x64.zip" } | Select-Object -First 1 -ExpandProperty browser_download_url
           echo "SKIA_URL=$url" >> $env:GITHUB_ENV
-      - name: Download Skia
+
+      - name: Download and extract Skia
         shell: pwsh
         run: |
           mkdir C:\deps -Force
-          Invoke-WebRequest -Uri $env:SKIA_URL -OutFile "C:\deps\skia.zip"
-          Expand-Archive -Path "C:\deps\skia.zip" -DestinationPath "C:\deps\skia"
-          echo "SKIA_DIR=C:\deps\skia" >> $env:GITHUB_ENV
+          Invoke-WebRequest -Uri $env:SKIA_URL -OutFile C:\deps\skia.zip
+          Expand-Archive -Path C:\deps\skia.zip -DestinationPath C:\deps\skia -Force
 
-      # 3. 安装 CMake 和 Ninja 构建工具
+      # 3. 安装 CMake 和 Ninja
       - name: Setup CMake
         uses: jwlawson/actions-setup-cmake@v2
         with:
           cmake-version: 'latest'
-      - name: Setup Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v4
 
-      # 4. 添加 MSVC 编译器环境（Aseprite 必须用 MSVC 编译）
-      - name: Add MSBuild to PATH
-        uses: microsoft/setup-msbuild@v2
+      - name: Install Ninja
+        run: choco install ninja
 
-      # 5. 正式开始构建 Aseprite
+      # 4. 构建 Aseprite（直接在工作目录中构建）
       - name: Build Aseprite
-        shell: cmd
+        shell: pwsh
         run: |
-          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
-          cd C:\deps\aseprite
-          mkdir build
-          cd build
-          cmake -G Ninja -DLAF_BACKEND=skia -DSKIA_DIR=C:\deps\skia -DSKIA_LIBRARY_DIR=C:\deps\skia\out\Release-x64 -DCMAKE_BUILD_TYPE=RelWithDebInfo ..
+          # 加载 Visual Studio 环境（确保编译器可用）
+          & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
+
+          # 创建构建目录并进入
+          New-Item -ItemType Directory -Force build
+          Set-Location build
+
+          # 运行 CMake 配置
+          cmake -G Ninja `
+            -DLAF_BACKEND=skia `
+            -DSKIA_DIR=C:\deps\skia `
+            -DSKIA_LIBRARY_DIR=C:\deps\skia\out\Release-x64 `
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo `
+            ..
+
+          # 执行编译
           ninja aseprite
 
-      # 6. 上传编译好的程序，供你下载
+      # 5. 上传编译产物
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Aseprite-Windows-Latest
-          path: C:\deps\aseprite\build\bin\aseprite.exe
+          path: build\bin\aseprite.exe
