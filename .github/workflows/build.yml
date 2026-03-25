@@ -10,13 +10,11 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      # 1. 检出代码（包含所有子模块）
       - name: Checkout code with submodules
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'   # 关键！自动初始化并更新子模块
+          submodules: 'recursive'
 
-      # 2. 下载并准备 Skia 依赖
       - name: Get Skia URL
         shell: pwsh
         run: |
@@ -31,38 +29,27 @@ jobs:
           Invoke-WebRequest -Uri $env:SKIA_URL -OutFile C:\deps\skia.zip
           Expand-Archive -Path C:\deps\skia.zip -DestinationPath C:\deps\skia -Force
 
-      # 3. 安装 CMake 和 Ninja
-      - name: Setup CMake
-        uses: jwlawson/actions-setup-cmake@v2
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          cmake-version: 'latest'
+          arch: x64
 
-      - name: Install Ninja
-        run: choco install ninja
-
-      # 4. 构建 Aseprite（直接在工作目录中构建）
-      - name: Build Aseprite
-        shell: pwsh
+      - name: Configure CMake with Visual Studio generator
         run: |
-          # 加载 Visual Studio 环境（确保编译器可用）
-          & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
-
-          # 创建构建目录并进入
-          New-Item -ItemType Directory -Force build
-          Set-Location build
-
-          # 运行 CMake 配置
-          cmake -G Ninja `
+          mkdir build
+          cd build
+          cmake -G "Visual Studio 17 2022" -A x64 `
             -DLAF_BACKEND=skia `
             -DSKIA_DIR=C:\deps\skia `
             -DSKIA_LIBRARY_DIR=C:\deps\skia\out\Release-x64 `
             -DCMAKE_BUILD_TYPE=RelWithDebInfo `
             ..
 
-          # 执行编译
-          ninja aseprite
+      - name: Build Aseprite
+        run: |
+          cd build
+          cmake --build . --config RelWithDebInfo --target aseprite
 
-      # 5. 上传编译产物
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
